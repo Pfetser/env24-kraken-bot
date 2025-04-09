@@ -22,11 +22,11 @@ def get_available_balance(currency="ZCAD"):
         print("Erreur récupération solde :", e)
         return 0
 
-def place_market_order(pair, volume):
+def place_market_order(pair, volume, side="buy"):
     try:
         response = api.query_private("AddOrder", {
             "pair": pair,
-            "type": "buy",
+            "type": side,
             "ordertype": "market",
             "volume": str(volume)
         })
@@ -36,7 +36,7 @@ def place_market_order(pair, volume):
 
 @app.route("/", methods=["GET"])
 def home():
-    return "Bot Env24 avec allocation fixe 🚀"
+    return "Bot Env24 avec vente au close 🚀"
 
 @app.route("/webhook", methods=["POST"])
 def webhook():
@@ -73,7 +73,6 @@ def webhook():
         if expected_previous is None or current_status != expected_previous:
             return jsonify({"status": f"Ignored: invalid order sequence ({signal})"}), 200
 
-        # Au buy1, enregistrer le solde initial
         if signal == "buy1" or "initial_cad" not in symbol_status:
             initial_cad = get_available_balance("ZCAD")
             symbol_status["initial_cad"] = initial_cad
@@ -89,7 +88,7 @@ def webhook():
         except Exception as e:
             return jsonify({"error": f"Erreur récupération prix : {str(e)}"}), 500
 
-        response = place_market_order(symbol, volume_to_buy)
+        response = place_market_order(symbol, volume_to_buy, side="buy")
 
         if "error" in response and response["error"]:
             return jsonify({"status": "Kraken error", "kraken_response": response}), 400
@@ -100,9 +99,27 @@ def webhook():
     elif signal == "close":
         if current_status == "none":
             return jsonify({"status": "No position to close"}), 200
+
+        # Identifier le ticker base (XBT, ETH, etc.)
+        base = symbol[:3]
+        base_currency = {
+            "BTC": "XBT",
+            "ETH": "ETH",
+            "SOL": "SOL",
+            "ADA": "ADA",
+            "XRP": "XRP"
+        }.get(base, base.upper())
+
+        # Vérifie le solde en crypto
+        volume_to_sell = get_available_balance(base_currency)
+        if volume_to_sell < 0.0001:
+            return jsonify({"status": "Nothing to sell", "volume": volume_to_sell}), 200
+
+        response = place_market_order(symbol, volume_to_sell, side="sell")
         symbol_status["status"] = "none"
         symbol_status.pop("initial_cad", None)
-        return jsonify({"status": "Position reset on close"}), 200
+
+        return jsonify({"status": "Position closed and sold", "kraken_response": response}), 200
 
     return jsonify({"status": "Unhandled signal"}), 200
 
