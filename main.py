@@ -17,6 +17,10 @@ position_state = {}
 def home():
     return "Bot Env24 avec log Supabase ✅"
 
+@app.route("/status", methods=["GET"])
+def status():
+    return jsonify(position_state)
+
 @app.route("/webhook", methods=["POST"])
 def webhook():
     data = request.json
@@ -42,7 +46,6 @@ def webhook():
     if signal == "buy1":
         if state["step"] >= 1:
             return jsonify({"status": "Ignored: invalid order sequence (buy1)"}), 200
-        # Calcul volume fictif ici (à ajuster plus tard si besoin)
         response = api.query_private("AddOrder", {
             "pair": symbol.replace("/", ""),
             "type": "buy",
@@ -77,7 +80,6 @@ def webhook():
         return jsonify({"status": "buy3 executed", "kraken_response": response}), 200
 
     if signal == "close":
-        # En vrai ici il faudrait vendre le total, mais on simplifie pour l’instant
         response = api.query_private("AddOrder", {
             "pair": symbol.replace("/", ""),
             "type": "sell",
@@ -91,4 +93,3 @@ def webhook():
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000)
-
