@@ -11,7 +11,6 @@ api = krakenex.API()
 api.key = os.getenv("KRAKEN_API_KEY")
 api.secret = os.getenv("KRAKEN_API_SECRET")
 
-# Mémoire d'état par stratégie / compte / plateforme
 position_status = {}
 
 def get_available_balance(currency="ZCAD"):
@@ -36,12 +35,11 @@ def place_market_order(pair, volume, side="buy"):
 
 @app.route("/", methods=["GET"])
 def home():
-    return "Bot Env24 avec vente au close 🚀"
+    return "Bot Env24 avec debug close actif 🧠"
 
 @app.route("/webhook", methods=["POST"])
 def webhook():
     data = request.json
-
     if not data:
         return jsonify({"error": "No data received"}), 400
 
@@ -100,7 +98,6 @@ def webhook():
         if current_status == "none":
             return jsonify({"status": "No position to close"}), 200
 
-        # Identifier le ticker base (XBT, ETH, etc.)
         base = symbol[:3]
         base_currency = {
             "BTC": "XBT",
@@ -110,16 +107,20 @@ def webhook():
             "XRP": "XRP"
         }.get(base, base.upper())
 
-        # Vérifie le solde en crypto
         volume_to_sell = get_available_balance(base_currency)
+        debug_info = {
+            "crypto_detected": base_currency,
+            "volume_detected": volume_to_sell
+        }
+
         if volume_to_sell < 0.0001:
-            return jsonify({"status": "Nothing to sell", "volume": volume_to_sell}), 200
+            return jsonify({"status": "Nothing to sell", **debug_info}), 200
 
         response = place_market_order(symbol, volume_to_sell, side="sell")
         symbol_status["status"] = "none"
         symbol_status.pop("initial_cad", None)
 
-        return jsonify({"status": "Position closed and sold", "kraken_response": response}), 200
+        return jsonify({"status": "Position closed and sold", "kraken_response": response, **debug_info}), 200
 
     return jsonify({"status": "Unhandled signal"}), 200
 
