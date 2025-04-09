@@ -1,7 +1,8 @@
-
 from flask import Flask, request, jsonify
 import os
 import krakenex
+import requests
+from datetime import datetime
 from dotenv import load_dotenv
 
 app = Flask(__name__)
@@ -11,25 +12,35 @@ api = krakenex.API()
 api.key = os.getenv("KRAKEN_API_KEY")
 api.secret = os.getenv("KRAKEN_API_SECRET")
 
+SUPABASE_URL = "https://bbsttyqzcikgkneaybdq.supabase.co"
+SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImJic3R0eXF6Y2lrZ2tuZWF5YmRxIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NDQyMTc5MTQsImV4cCI6MjA1OTc5MzkxNH0.pRFopBJ-KrX7cEwSrN-39HJUnSu-y5OEbAQDo4VvEuc"
+
 position_status = {}
 
-def get_available_balance_from_any_key(prefixes=["X", "Z"]):
-    try:
-        balance = api.query_private("Balance")["result"]
-        for prefix in prefixes:
-            for key in balance:
-                if key.startswith(prefix + "XBT") and float(balance[key]) > 0:
-                    return float(balance[key]), key
-        return 0.0, None
-    except Exception as e:
-        return 0.0, None
+def log_trade(data):
+    url = f"{SUPABASE_URL}/rest/v1/trades"
+    headers = {
+        "apikey": SUPABASE_KEY,
+        "Authorization": f"Bearer {SUPABASE_KEY}",
+        "Content-Type": "application/json",
+        "Prefer": "return=representation"
+    }
+    r = requests.post(url, json=data, headers=headers)
+    return r.json()
 
 def get_available_balance(currency="ZCAD"):
     try:
         balance = api.query_private("Balance")
         return float(balance["result"].get(currency, 0))
-    except Exception as e:
+    except Exception:
         return 0
+
+def get_price(pair):
+    try:
+        ticker = api.query_public("Ticker", {"pair": pair})
+        return float(ticker["result"][list(ticker["result"].keys())[0]]["a"][0])
+    except:
+        return None
 
 def place_market_order(pair, volume, side="buy"):
     try:
@@ -45,7 +56,7 @@ def place_market_order(pair, volume, side="buy"):
 
 @app.route("/", methods=["GET"])
 def home():
-    return "Bot Env24 FINAL avec vente 100% fonctionnelle ✅"
+    return "Bot Env24 avec log Supabase ✅"
 
 @app.route("/webhook", methods=["POST"])
 def webhook():
@@ -85,21 +96,31 @@ def webhook():
             initial_cad = get_available_balance("ZCAD")
             symbol_status["initial_cad"] = initial_cad
 
-        initial_cad = symbol_status.get("initial_cad", 0)
-        allocation = initial_cad * 0.3
+        allocation = symbol_status["initial_cad"] * 0.3
+        price = get_price(symbol)
+        if not price:
+            return jsonify({"error": "Could not retrieve price"}), 500
 
-        try:
-            ticker = api.query_public("Ticker", {"pair": symbol})
-            ask_price = float(ticker["result"][list(ticker["result"].keys())[0]]["a"][0])
-            volume_to_buy = round(allocation / ask_price, 6)
-            volume_to_buy = max(volume_to_buy, 0.0001)
-        except Exception as e:
-            return jsonify({"error": f"Erreur récupération prix : {str(e)}"}), 500
-
-        response = place_market_order(symbol, volume_to_buy, side="buy")
+        volume = round(allocation / price, 6)
+        volume = max(volume, 0.0001)
+        response = place_market_order(symbol, volume, side="buy")
 
         if "error" in response and response["error"]:
             return jsonify({"status": "Kraken error", "kraken_response": response}), 400
+
+        txid = response["result"]["txid"][0]
+        amount_cad = round(volume * price, 2)
+
+        log_trade({
+            "created_at": datetime.utcnow().isoformat(),
+            "account": account,
+            "symbol": symbol,
+            "signal": signal,
+            "volume": volume,
+            "price": price,
+            "amount_cad": amount_cad,
+            "txid": txid
+        })
 
         symbol_status["status"] = signal
         return jsonify({"status": f"{signal} executed", "kraken_response": response}), 200
@@ -109,21 +130,41 @@ def webhook():
             return jsonify({"status": "No position to close"}), 200
 
         base = symbol[:3]
-        if base == "BTC":
-            volume, found_key = get_available_balance_from_any_key()
-        else:
-            volume = get_available_balance("Z" + base)
+        kraken_base_key = {
+            "BTC": "XXBT", "ETH": "XETH", "SOL": "XSOL", "ADA": "XADA", "XRP": "XXRP"
+        }.get(base, "X" + base)
 
+        volume = get_available_balance(kraken_base_key)
         if volume < 0.0001:
             return jsonify({"status": "Nothing to sell", "volume": volume}), 200
 
+        price = get_price(symbol)
         response = place_market_order(symbol, volume, side="sell")
+
+        if "error" in response and response["error"]:
+            return jsonify({"status": "Kraken error", "kraken_response": response}), 400
+
+        txid = response["result"]["txid"][0]
+        amount_cad = round(volume * price, 2)
+
+        log_trade({
+            "created_at": datetime.utcnow().isoformat(),
+            "account": account,
+            "symbol": symbol,
+            "signal": "close",
+            "volume": volume,
+            "price": price,
+            "amount_cad": amount_cad,
+            "txid": txid
+        })
+
         symbol_status["status"] = "none"
         symbol_status.pop("initial_cad", None)
 
-        return jsonify({"status": "Position closed and sold", "kraken_response": response, "volume_sold": volume}), 200
+        return jsonify({"status": "Position closed and sold", "kraken_response": response}), 200
 
     return jsonify({"status": "Unhandled signal"}), 200
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000)
+
