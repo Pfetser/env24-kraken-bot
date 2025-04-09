@@ -54,7 +54,6 @@ def webhook():
     if strategy != "Env24" or platform != "Kraken":
         return jsonify({"status": "Ignored: strategy or platform mismatch"}), 200
 
-    # Initialiser l'état si non existant
     if account not in position_status:
         position_status[account] = {}
     if symbol not in position_status[account]:
@@ -62,7 +61,6 @@ def webhook():
 
     current_status = position_status[account][symbol]["status"]
 
-    # Logique buy1 → buy2 → buy3
     if signal.startswith("buy"):
         allowed = {
             "buy1": "none",
@@ -74,26 +72,28 @@ def webhook():
         if expected_previous is None or current_status != expected_previous:
             return jsonify({"status": f"Ignored: invalid order sequence ({signal})"}), 200
 
-        # Calculer le solde et volume à 30%
         cad_balance = get_available_balance("ZCAD")
         allocation = cad_balance * 0.3
 
-        # Obtenir prix actuel pour conversion (via Ticker)
         try:
             ticker = api.query_public("Ticker", {"pair": symbol})
             ask_price = float(ticker["result"][list(ticker["result"].keys())[0]]["a"][0])
             volume_to_buy = round(allocation / ask_price, 6)
+            volume_to_buy = max(volume_to_buy, 0.0001)
         except Exception as e:
             return jsonify({"error": f"Erreur récupération prix : {str(e)}"}), 500
 
         response = place_market_order(symbol, volume_to_buy)
+
+        if "error" in response and response["error"]:
+            return jsonify({"status": "Kraken error", "kraken_response": response}), 400
+
         position_status[account][symbol]["status"] = signal
         return jsonify({"status": f"{signal} executed", "kraken_response": response}), 200
 
     elif signal == "close":
         if current_status == "none":
             return jsonify({"status": "No position to close"}), 200
-        # Ici on ne vend pas encore (à implémenter si souhaité)
         position_status[account][symbol]["status"] = "none"
         return jsonify({"status": "Position reset on close"}), 200
 
