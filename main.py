@@ -27,7 +27,7 @@ def webhook():
 
     strategy = data.get("strategy")
     signal = data.get("signal")
-    symbol = data.get("symbol", "BTC/USD")
+    symbol = data.get("symbol", "BTC/CAD")
 
     if strategy != "Env24":
         return jsonify({"status": "Ignored: Not Env24 strategy"}), 200
@@ -37,10 +37,10 @@ def webhook():
             return jsonify({"status": "Position already open, no action taken"}), 200
         try:
             response = api.query_private("AddOrder", {
-                "pair": "XBTUSD",
+                "pair": "XBTCAD",
                 "type": "buy",
                 "ordertype": "market",
-                "volume": "0.001"
+                "volume": "0.0001"
             })
             position_open = True
             return jsonify({"status": "Order sent", "kraken_response": response}), 200
