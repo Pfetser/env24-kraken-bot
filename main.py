@@ -36,7 +36,7 @@ def place_market_order(pair, volume):
 
 @app.route("/", methods=["GET"])
 def home():
-    return "Bot Env24 multi-niveau en ligne 🚀"
+    return "Bot Env24 avec allocation fixe 🚀"
 
 @app.route("/webhook", methods=["POST"])
 def webhook():
@@ -60,20 +60,26 @@ def webhook():
         position_status[account][symbol] = {"status": "none"}
 
     current_status = position_status[account][symbol]["status"]
+    symbol_status = position_status[account][symbol]
+
+    allowed = {
+        "buy1": "none",
+        "buy2": "buy1",
+        "buy3": "buy2"
+    }
 
     if signal.startswith("buy"):
-        allowed = {
-            "buy1": "none",
-            "buy2": "buy1",
-            "buy3": "buy2"
-        }
         expected_previous = allowed.get(signal)
-
         if expected_previous is None or current_status != expected_previous:
             return jsonify({"status": f"Ignored: invalid order sequence ({signal})"}), 200
 
-        cad_balance = get_available_balance("ZCAD")
-        allocation = cad_balance * 0.3
+        # Au buy1, enregistrer le solde initial
+        if signal == "buy1" or "initial_cad" not in symbol_status:
+            initial_cad = get_available_balance("ZCAD")
+            symbol_status["initial_cad"] = initial_cad
+
+        initial_cad = symbol_status.get("initial_cad", 0)
+        allocation = initial_cad * 0.3
 
         try:
             ticker = api.query_public("Ticker", {"pair": symbol})
@@ -88,13 +94,14 @@ def webhook():
         if "error" in response and response["error"]:
             return jsonify({"status": "Kraken error", "kraken_response": response}), 400
 
-        position_status[account][symbol]["status"] = signal
+        symbol_status["status"] = signal
         return jsonify({"status": f"{signal} executed", "kraken_response": response}), 200
 
     elif signal == "close":
         if current_status == "none":
             return jsonify({"status": "No position to close"}), 200
-        position_status[account][symbol]["status"] = "none"
+        symbol_status["status"] = "none"
+        symbol_status.pop("initial_cad", None)
         return jsonify({"status": "Position reset on close"}), 200
 
     return jsonify({"status": "Unhandled signal"}), 200
