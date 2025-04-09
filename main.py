@@ -11,17 +11,119 @@ api = krakenex.API()
 api.key = os.getenv("KRAKEN_API_KEY")
 api.secret = os.getenv("KRAKEN_API_SECRET")
 
+position_status = {}
+
+def get_available_balance_from_any_key(prefixes=["X", "Z"]):
+    try:
+        balance = api.query_private("Balance")["result"]
+        for prefix in prefixes:
+            for key in balance:
+                if key.startswith(prefix + "XBT") and float(balance[key]) > 0:
+                    return float(balance[key]), key
+        return 0.0, None
+    except Exception as e:
+        return 0.0, None
+
+def get_available_balance(currency="ZCAD"):
+    try:
+        balance = api.query_private("Balance")
+        return float(balance["result"].get(currency, 0))
+    except Exception as e:
+        return 0
+
+def place_market_order(pair, volume, side="buy"):
+    try:
+        response = api.query_private("AddOrder", {
+            "pair": pair,
+            "type": side,
+            "ordertype": "market",
+            "volume": str(volume)
+        })
+        return response
+    except Exception as e:
+        return {"error": str(e)}
+
 @app.route("/", methods=["GET"])
 def home():
-    return "Bot Env24 - Affichage complet du solde 🔍"
+    return "Bot Env24 FINAL avec vente 100% fonctionnelle ✅"
 
-@app.route("/debug/balance", methods=["GET"])
-def debug_balance():
-    try:
-        response = api.query_private("Balance")
-        return jsonify(response)
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
+@app.route("/webhook", methods=["POST"])
+def webhook():
+    data = request.json
+    if not data:
+        return jsonify({"error": "No data received"}), 400
+
+    strategy = data.get("strategy")
+    platform = data.get("platform")
+    account = data.get("account")
+    symbol = data.get("symbol", "BTC/CAD").replace("/", "")
+    signal = data.get("signal")
+
+    if strategy != "Env24" or platform != "Kraken":
+        return jsonify({"status": "Ignored: strategy or platform mismatch"}), 200
+
+    if account not in position_status:
+        position_status[account] = {}
+    if symbol not in position_status[account]:
+        position_status[account][symbol] = {"status": "none"}
+
+    current_status = position_status[account][symbol]["status"]
+    symbol_status = position_status[account][symbol]
+
+    allowed = {
+        "buy1": "none",
+        "buy2": "buy1",
+        "buy3": "buy2"
+    }
+
+    if signal.startswith("buy"):
+        expected_previous = allowed.get(signal)
+        if expected_previous is None or current_status != expected_previous:
+            return jsonify({"status": f"Ignored: invalid order sequence ({signal})"}), 200
+
+        if signal == "buy1" or "initial_cad" not in symbol_status:
+            initial_cad = get_available_balance("ZCAD")
+            symbol_status["initial_cad"] = initial_cad
+
+        initial_cad = symbol_status.get("initial_cad", 0)
+        allocation = initial_cad * 0.3
+
+        try:
+            ticker = api.query_public("Ticker", {"pair": symbol})
+            ask_price = float(ticker["result"][list(ticker["result"].keys())[0]]["a"][0])
+            volume_to_buy = round(allocation / ask_price, 6)
+            volume_to_buy = max(volume_to_buy, 0.0001)
+        except Exception as e:
+            return jsonify({"error": f"Erreur récupération prix : {str(e)}"}), 500
+
+        response = place_market_order(symbol, volume_to_buy, side="buy")
+
+        if "error" in response and response["error"]:
+            return jsonify({"status": "Kraken error", "kraken_response": response}), 400
+
+        symbol_status["status"] = signal
+        return jsonify({"status": f"{signal} executed", "kraken_response": response}), 200
+
+    elif signal == "close":
+        if current_status == "none":
+            return jsonify({"status": "No position to close"}), 200
+
+        base = symbol[:3]
+        if base == "BTC":
+            volume, found_key = get_available_balance_from_any_key()
+        else:
+            volume = get_available_balance("Z" + base)
+
+        if volume < 0.0001:
+            return jsonify({"status": "Nothing to sell", "volume": volume}), 200
+
+        response = place_market_order(symbol, volume, side="sell")
+        symbol_status["status"] = "none"
+        symbol_status.pop("initial_cad", None)
+
+        return jsonify({"status": "Position closed and sold", "kraken_response": response, "volume_sold": volume}), 200
+
+    return jsonify({"status": "Unhandled signal"}), 200
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000)
