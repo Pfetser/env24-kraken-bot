@@ -34,6 +34,26 @@ def status():
 def debug_staking():
     return jsonify({"staking_status": staking_status})
 
+@app.route("/force-stake", methods=["GET"])
+def force_stake():
+    symbol = request.args.get("symbol")
+    account = request.args.get("account")
+    if not symbol or not account:
+        return jsonify({"error": "Missing symbol or account"}), 400
+
+    asset = symbol.split("/")[0].upper()
+    key = f"{account}_{symbol}"
+
+    if asset in staking_supported:
+        try:
+            response = api.query_private("Stake", {"asset": asset, "method": "staking"})
+            staking_status[key] = True
+            return jsonify({"status": "Staking command sent", "asset": asset, "response": response}), 200
+        except Exception as e:
+            return jsonify({"status": "Staking failed", "error": str(e)}), 500
+    else:
+        return jsonify({"status": f"Asset {asset} not eligible for staking"}), 400
+
 @app.route("/webhook", methods=["POST"])
 def webhook():
     data = request.json
@@ -52,7 +72,6 @@ def webhook():
     asset = symbol.split("/")[0].upper()
     state = position_state.get(key, {"step": 0})
 
-    # Auto-stake si idle et actif supporté
     if state["step"] == 0 and asset in staking_supported and not staking_status.get(key):
         stake_resp = api.query_private("Stake", {"asset": asset, "method": "staking"})
         staking_status[key] = True
