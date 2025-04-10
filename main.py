@@ -20,10 +20,15 @@ def home():
 def status():
     return jsonify(position_state)
 
-@app.route("/staking-assets", methods=["GET"])
-def staking_assets():
-    response = api.query_private("Staking/Assets")
-    return jsonify(response)
+@app.route("/debug/staking-assets", methods=["GET"])
+def debug_staking_assets():
+    try:
+        response = api.query_private("Staking/Assets")
+        if response.get("error"):
+            return jsonify({"status": "error", "kraken_error": response["error"]})
+        return jsonify({"status": "success", "result": response.get("result")})
+    except Exception as e:
+        return jsonify({"status": "exception", "message": str(e)}), 500
 
 @app.route("/webhook", methods=["POST"])
 def webhook():
@@ -96,4 +101,3 @@ def webhook():
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000)
-
