@@ -11,14 +11,20 @@ api.key = os.getenv("KRAKEN_API_KEY")
 api.secret = os.getenv("KRAKEN_API_SECRET")
 
 position_state = {}
+staking_status = {}
+staking_supported = {
+    "ADA": {"delay": 0},
+    "MINA": {"delay": 0},
+    "TAO": {"delay": 0}
+}
 
 @app.route("/", methods=["GET"])
 def home():
-    return "Bot Env24 avec log Supabase ✅"
+    return "Bot Env24 avec staking intelligent ✅"
 
 @app.route("/status", methods=["GET"])
 def status():
-    return jsonify(position_state)
+    return jsonify({"position_state": position_state, "staking_status": staking_status})
 
 @app.route("/debug/staking-assets", methods=["GET"])
 def debug_staking_assets():
@@ -45,15 +51,34 @@ def webhook():
         return jsonify({"status": "Ignored: not Env24"}), 200
 
     key = f"{account}_{symbol}"
+    asset = symbol.split("/")[0].upper()
     state = position_state.get(key, {"step": 0})
+
+    # Auto-stake si idle
+    if state["step"] == 0 and asset in staking_supported and not staking_status.get(key):
+        stake_resp = api.query_private("Stake", {"asset": asset, "method": "staking"})
+        staking_status[key] = True
+        print(f"Staked {asset}")
+
+    # Signal spécial : prepare_buy1 → unstake seulement
+    if signal == "prepare_buy1":
+        if asset in staking_supported and staking_status.get(key):
+            unstake_resp = api.query_private("Unstake", {"asset": asset})
+            staking_status[key] = False
+            return jsonify({"status": "Unstaked in preparation for buy", "response": unstake_resp}), 200
+        return jsonify({"status": "No staking active or unsupported asset"}), 200
 
     if signal == "reset":
         position_state[key] = {"step": 0}
+        staking_status[key] = False
         return jsonify({"status": f"Position reset for {symbol}"}), 200
 
     if signal == "buy1":
         if state["step"] >= 1:
             return jsonify({"status": "Ignored: invalid order sequence (buy1)"}), 200
+        if staking_status.get(key):
+            unstake_resp = api.query_private("Unstake", {"asset": asset})
+            staking_status[key] = False
         response = api.query_private("AddOrder", {
             "pair": symbol.replace("/", ""),
             "type": "buy",
@@ -95,6 +120,7 @@ def webhook():
             "volume": "0.0006"
         })
         position_state[key] = {"step": 0}
+        staking_status[key] = False
         return jsonify({"status": "Position closed", "kraken_response": response}), 200
 
     return jsonify({"status": "Signal not handled"}), 200
