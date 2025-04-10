@@ -23,7 +23,7 @@ def status():
 @app.route("/debug/staking-assets", methods=["GET"])
 def debug_staking_assets():
     try:
-        response = api.query_private("Staking/Assets")
+        response = api.query_private("Staking/AssetInfo")
         if response.get("error"):
             return jsonify({"status": "error", "kraken_error": response["error"]})
         return jsonify({"status": "success", "result": response.get("result")})
