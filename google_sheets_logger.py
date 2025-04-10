@@ -8,9 +8,10 @@ SCOPE = [
     "https://www.googleapis.com/auth/drive"
 ]
 
-CREDS = Credentials.from_service_account_file(
-    "credentials.json", scopes=SCOPE
-)
+import json
+CREDENTIALS_JSON = os.getenv("GOOGLE_CREDENTIALS_JSON")
+CREDS = Credentials.from_service_account_info(json.loads(CREDENTIALS_JSON), scopes=SCOPE)
+
 
 gs_client = gspread.authorize(CREDS)
 SPREADSHEET_ID = "1uyG-QNpWrb0FxV1r09Lc2L-3e1hzQ9eLM9ONQbcEg1Q"
