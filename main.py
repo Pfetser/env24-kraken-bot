@@ -55,8 +55,10 @@ def handle_prepare_buy(account):
         balance = api.query_private("Balance")
         staking_targets = ["ADA", "MINA", "TAO"]
         for crypto in staking_targets:
-            if f"X{crypto}" in balance["result"]:
-                volume = balance["result"][f"X{crypto}"]
+            # Vérifie aussi les cryptos stakées (ex: ADA.S)
+            staked_key = f"{crypto}.S"
+            if staked_key in balance["result"]:
+                volume = balance["result"][staked_key]
                 response = api.query_private("AddOrder", {
                     "pair": f"{crypto}USD",
                     "type": "sell",
@@ -70,6 +72,7 @@ def handle_prepare_buy(account):
         return jsonify({"status": "No staked asset found to sell"}), 200
     except Exception as e:
         return jsonify({"error": str(e), "status": "prepare_buy failed"}), 500
+
 
 def handle_buy(account, symbol, step, key):
     try:
