@@ -10,7 +10,6 @@ api = krakenex.API()
 api.key = os.getenv("KRAKEN_API_KEY")
 api.secret = os.getenv("KRAKEN_API_SECRET")
 
-# Mémoire pour suivre les positions ouvertes par crypto
 position_state = {}
 
 @app.route("/", methods=["GET"])
@@ -20,6 +19,11 @@ def home():
 @app.route("/status", methods=["GET"])
 def status():
     return jsonify(position_state)
+
+@app.route("/staking-assets", methods=["GET"])
+def staking_assets():
+    response = api.query_private("Staking/Assets")
+    return jsonify(response)
 
 @app.route("/webhook", methods=["POST"])
 def webhook():
@@ -35,7 +39,6 @@ def webhook():
     if strategy != "Env24":
         return jsonify({"status": "Ignored: not Env24"}), 200
 
-    # Clef unique pour identifier la position : une crypto pour un compte
     key = f"{account}_{symbol}"
     state = position_state.get(key, {"step": 0})
 
@@ -84,7 +87,7 @@ def webhook():
             "pair": symbol.replace("/", ""),
             "type": "sell",
             "ordertype": "market",
-            "volume": "0.0006"  # temporaire
+            "volume": "0.0006"
         })
         position_state[key] = {"step": 0}
         return jsonify({"status": "Position closed", "kraken_response": response}), 200
@@ -93,3 +96,4 @@ def webhook():
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000)
+
