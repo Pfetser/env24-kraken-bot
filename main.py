@@ -1,3 +1,5 @@
+print("🚀 main.py bien déployé avec prepare_buy")
+
 from flask import Flask, request, jsonify
 import os
 import krakenex
