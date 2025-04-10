@@ -12,29 +12,27 @@ api.secret = os.getenv("KRAKEN_API_SECRET")
 
 position_state = {}
 staking_status = {}
+
 staking_supported = {
     "ADA": {"delay": 0},
     "MINA": {"delay": 0},
-    "TAO": {"delay": 0}
+    "TAO": {"delay": 0},
+    "KAVA": {"delay": 0},
+    "FLOW": {"delay": 0},
+    "OSMO": {"delay": 0}
 }
 
 @app.route("/", methods=["GET"])
 def home():
-    return "Bot Env24 avec staking intelligent ✅"
+    return "Bot Env24 avec staking intelligent (CAD+USD) ✅"
 
 @app.route("/status", methods=["GET"])
 def status():
     return jsonify({"position_state": position_state, "staking_status": staking_status})
 
-@app.route("/debug/staking-assets", methods=["GET"])
-def debug_staking_assets():
-    try:
-        response = api.query_private("Staking/AssetInfo")
-        if response.get("error"):
-            return jsonify({"status": "error", "kraken_error": response["error"]})
-        return jsonify({"status": "success", "result": response.get("result")})
-    except Exception as e:
-        return jsonify({"status": "exception", "message": str(e)}), 500
+@app.route("/debug/staking", methods=["GET"])
+def debug_staking():
+    return jsonify({"staking_status": staking_status})
 
 @app.route("/webhook", methods=["POST"])
 def webhook():
@@ -54,13 +52,12 @@ def webhook():
     asset = symbol.split("/")[0].upper()
     state = position_state.get(key, {"step": 0})
 
-    # Auto-stake si idle
+    # Auto-stake si idle et actif supporté
     if state["step"] == 0 and asset in staking_supported and not staking_status.get(key):
         stake_resp = api.query_private("Stake", {"asset": asset, "method": "staking"})
         staking_status[key] = True
         print(f"Staked {asset}")
 
-    # Signal spécial : prepare_buy1 → unstake seulement
     if signal == "prepare_buy1":
         if asset in staking_supported and staking_status.get(key):
             unstake_resp = api.query_private("Unstake", {"asset": asset})
@@ -127,3 +124,4 @@ def webhook():
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000)
+
