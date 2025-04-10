@@ -48,6 +48,27 @@ def webhook():
         update_status(account, symbol, 0, "reset")
         return jsonify({"status": f"Position reset for {symbol}"}), 200
 
+    if signal == "prepare_buy":
+        try:
+            balance = api.query_private("Balance")
+            staking_targets = ["ADA", "MINA", "TAO"]
+            for crypto in staking_targets:
+                if f"X{crypto}" in balance["result"]:
+                    volume = balance["result"][f"X{crypto}"]
+                    response = api.query_private("AddOrder", {
+                        "pair": f"{crypto}USD",
+                        "type": "sell",
+                        "ordertype": "market",
+                        "volume": volume
+                    })
+                    txid = response.get("result", {}).get("txid", ["?"])[0]
+                    log_trade(account, f"{crypto}/USD", "prepare_sell", volume, "sell", txid)
+                    update_status(account, f"{crypto}/USD", 0, "prepare_sell", txid)
+                    return jsonify({"status": f"Staking sold for {crypto}", "txid": txid}), 200
+            return jsonify({"status": "No staked asset found to sell"}), 200
+        except Exception as e:
+            return jsonify({"error": str(e), "status": "prepare_buy failed"}), 500
+
     if signal == "buy1":
         if state["step"] >= 1:
             return jsonify({"status": "Ignored: invalid order sequence (buy1)"}), 200
@@ -110,4 +131,3 @@ def webhook():
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000)
-
