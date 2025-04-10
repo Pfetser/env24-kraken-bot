@@ -1,0 +1,7 @@
+{
+  "strategy": "Env24",
+  "platform": "Kraken",
+  "account": "Florent",
+  "symbol": "KAVA/USD",
+  "signal": "prepare_buy1"
+}
