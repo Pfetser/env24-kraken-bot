@@ -55,24 +55,20 @@ def handle_prepare_buy(account):
         balance = api.query_private("Balance")
         staking_targets = ["ADA", "MINA", "TAO"]
         for crypto in staking_targets:
-            # Vérifie aussi les cryptos stakées (ex: ADA.S)
             staked_key = f"{crypto}.S"
-            if staked_key in balance["result"]:
+            if staked_key in balance["result"] and float(balance["result"][staked_key]) > 0:
                 volume = balance["result"][staked_key]
-                response = api.query_private("AddOrder", {
-                    "pair": f"{crypto}USD",
-                    "type": "sell",
-                    "ordertype": "market",
-                    "volume": volume
+                response = api.query_private("Stake/Unstake", {
+                    "asset": crypto,
+                    "amount": volume
                 })
-                txid = response.get("result", {}).get("txid", ["?"])[0]
-                log_trade(account, f"{crypto}/USD", "prepare_sell", volume, "sell", txid)
-                update_status(account, f"{crypto}/USD", 0, "prepare_sell", txid)
-                return jsonify({"status": f"Staking sold for {crypto}", "txid": txid}), 200
-        return jsonify({"status": "No staked asset found to sell"}), 200
+                txid = response.get("result", {}).get("txid", "?")
+                log_trade(account, f"{crypto}/USD", "prepare_unstake", volume, "unstake", txid)
+                update_status(account, f"{crypto}/USD", 0, "prepare_unstake", txid)
+                return jsonify({"status": f"Staking unstake requested for {crypto}", "txid": txid}), 200
+        return jsonify({"status": "No staked asset found to unstake"}), 200
     except Exception as e:
         return jsonify({"error": str(e), "status": "prepare_buy failed"}), 500
-
 
 def handle_buy(account, symbol, step, key):
     try:
