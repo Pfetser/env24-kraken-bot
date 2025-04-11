@@ -1,104 +1,32 @@
-import os
-from flask import Flask, request, jsonify
-import krakenex
-from dotenv import load_dotenv
-from google_sheets_logger import update_status, log_trade
+//@version=5
+strategy("LENV24 B1", overlay=true, default_qty_type=strategy.percent_of_equity, default_qty_value=100, commission_type=strategy.commission.percent, commission_value=0.08)
 
-print("🚀 main.py bien déployé avec logique stricte ENV24")
+// === INPUTS ===
+ma_window = input.int(4, "MA Window", minval=1)
+buy1_offset = input.float(0.07, "Buy1 Envelope Offset (%)", step=0.01)
 
-app = Flask(__name__)
-load_dotenv()
+// === CALCULS ===
+ma = ta.sma(close, ma_window)
+buy1_line = ma * (1 - buy1_offset)
+close_line = ma
 
-api = krakenex.API()
-api.key = os.getenv("KRAKEN_API_KEY")
-api.secret = os.getenv("KRAKEN_API_SECRET")
+// === ALERTES & ENTRÉES ===
+long_condition = ta.crossover(close, buy1_line)
+if long_condition
+    strategy.entry("Buy1", strategy.long)
 
-# Suivi des positions par compte/crypto
-position_steps = {}
+// === SORTIE ===
+close_condition = ta.crossunder(close, close_line)
+if close_condition
+    strategy.close("Buy1")
 
-@app.route("/", methods=["GET"])
-def home():
-    return "Kraken Bot is live!"
+// === VISUELS ===
+plot(ma, title="MA", color=color.orange, linewidth=2)
+plot(buy1_line, title="Buy1 Line", color=color.green, linewidth=1)
+plot(close_line, title="Close Line", color=color.red, linewidth=1)
 
-@app.route("/webhook", methods=["POST"])
-def webhook():
-    data = request.json
-    if not data:
-        return jsonify({"error": "No data received"}), 400
+plotshape(long_condition, title="Achat B1", location=location.belowbar, color=color.green, style=shape.triangleup, size=size.small)
+plotshape(close_condition, title="Vente", location=location.abovebar, color=color.red, style=shape.triangledown, size=size.small)
 
-    strategy = data.get("strategy")
-    signal = data.get("signal")
-    symbol = data.get("symbol")
-    account = data.get("account")
-
-    print("🔔 Webhook reçu:", data)
-
-    if strategy != "Env24":
-        return jsonify({"status": "Ignored: Not Env24 strategy"}), 200
-
-    key = f"{account}_{symbol}"
-    step = position_steps.get(key, 0)
-
-    if signal == "buy1" and step == 0:
-        return handle_buy(account, symbol, 1, key)
-    elif signal == "buy2" and step == 1:
-        return handle_buy(account, symbol, 2, key)
-    elif signal == "buy3" and step == 2:
-        return handle_buy(account, symbol, 3, key)
-    elif signal == "close" and step >= 1:
-        return handle_close(account, symbol, key)
-    else:
-        print(f"🚫 Signal ignoré: {signal} reçu à l'étape {step}")
-        return jsonify({"status": f"Ignored: invalid order sequence ({signal})"}), 200
-
-def handle_buy(account, symbol, step, key):
-    try:
-        balance = api.query_private("Balance")
-        usd_balance = float(balance["result"].get("ZUSD", 0.0))
-        volume_to_use = usd_balance * 0.3
-        if volume_to_use <= 5:
-            return jsonify({"status": "Not enough USD balance for buy"}), 200
-
-        price_info = api.query_public("Ticker", {"pair": symbol.replace("/", "")})
-        price = float(list(price_info["result"].values())[0]["c"][0])
-        volume = round(volume_to_use / price, 8)
-
-        response = api.query_private("AddOrder", {
-            "pair": symbol.replace("/", ""),
-            "type": "buy",
-            "ordertype": "market",
-            "volume": str(volume)
-        })
-        txid = response.get("result", {}).get("txid", ["?"])[0]
-        position_steps[key] = step
-        log_trade(account, symbol, f"buy{step}", volume, "buy", txid, price)
-        update_status(account, symbol, step, f"buy{step}", txid)
-        return jsonify({"status": f"buy{step} executed", "kraken_response": response}), 200
-    except Exception as e:
-        return jsonify({"error": str(e), "status": f"buy{step} failed"}), 500
-
-def handle_close(account, symbol, key):
-    try:
-        balance = api.query_private("Balance")
-        crypto_code = "X" + symbol.split("/")[0]
-        volume = balance["result"].get(crypto_code, "0")
-        if float(volume) == 0:
-            return jsonify({"status": "Nothing to sell", "volume": volume}), 200
-
-        response = api.query_private("AddOrder", {
-            "pair": symbol.replace("/", ""),
-            "type": "sell",
-            "ordertype": "market",
-            "volume": volume
-        })
-        txid = response.get("result", {}).get("txid", ["?"])[0]
-        log_trade(account, symbol, "close", volume, "sell", txid)
-        update_status(account, symbol, 0, "close", txid)
-        position_steps[key] = 0
-        return jsonify({"status": "Position closed", "kraken_response": response}), 200
-    except Exception as e:
-        return jsonify({"error": str(e), "status": "close failed"}), 500
-
-if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=5000)
-
+alertcondition(long_condition, title="Signal Buy1", message="{{ticker}} Buy1 Signal")
+alertcondition(close_condition, title="Signal Close", message="{{ticker}} Close Signal")
