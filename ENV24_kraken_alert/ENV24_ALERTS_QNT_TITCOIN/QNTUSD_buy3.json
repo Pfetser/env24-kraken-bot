@@ -2,6 +2,6 @@
   "strategy": "Env24",
   "platform": "Kraken",
   "account": "Florent",
-  "symbol": "TITECOIN/USD",
-  "signal": "prepare_buy"
+  "symbol": "QNT/USD",
+  "signal": "buy3"
 }

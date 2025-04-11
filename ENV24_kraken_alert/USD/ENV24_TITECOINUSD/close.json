@@ -1,8 +1,0 @@
-{
-  "strategy": "Env24",
-  "platform": "Kraken",
-  "account": "Florent",
-  "symbol": "TITECOIN/USD",
-  "signal": "close",
-  "price_exit": "{{close}}"
-}
