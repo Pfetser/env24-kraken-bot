@@ -1,57 +1,120 @@
-import gspread
-from google.oauth2.service_account import Credentials
-from datetime import datetime
+from flask import Flask, request, jsonify
 import os
+import krakenex
+from dotenv import load_dotenv
+from google_sheets_logger import update_status, log_trade
 
-# Configuration d'accès à l'API Google Sheets
-SCOPE = [
-    "https://www.googleapis.com/auth/spreadsheets",
-    "https://www.googleapis.com/auth/drive"
-]
+app = Flask(__name__)
+load_dotenv()
 
-# Utilise la variable d'environnement pour les credentials (JSON au format string)
-GOOGLE_CREDENTIALS_JSON = os.getenv("GOOGLE_CREDENTIALS_JSON")
-CREDS = Credentials.from_service_account_info(eval(GOOGLE_CREDENTIALS_JSON), scopes=SCOPE)
+api = krakenex.API()
+api.key = os.getenv("KRAKEN_API_KEY")
+api.secret = os.getenv("KRAKEN_API_SECRET")
 
-gs_client = gspread.authorize(CREDS)
-SPREADSHEET_ID = "1uyG-QNpWrb0FxV1r09Lc2L-3e1hzQ9eLM9ONQbcEg1Q"
-sheet = gs_client.open_by_key(SPREADSHEET_ID)
+position_steps = {}
 
-# Mise à jour de l'état en temps réel
-def update_status(account, symbol, step, signal, txid=""):
+@app.route("/", methods=["GET"])
+def home():
+    return "Kraken Bot is live!"
+
+@app.route("/webhook", methods=["POST"])
+def webhook():
+    data = request.json
+    if not data:
+        return jsonify({"error": "No data received"}), 400
+
+    strategy = data.get("strategy")
+    signal = data.get("signal")
+    symbol = data.get("symbol")
+    account = data.get("account")
+
+    if strategy != "Env24":
+        return jsonify({"status": "Ignored: Not Env24 strategy"}), 200
+
+    key = f"{account}_{symbol}"
+    step = position_steps.get(key, 0)
+
+    if signal == "buy1" and step == 0:
+        return handle_buy(account, symbol, 1, key)
+    elif signal == "buy2" and step == 1:
+        return handle_buy(account, symbol, 2, key)
+    elif signal == "buy3" and step == 2:
+        return handle_buy(account, symbol, 3, key)
+    elif signal == "close" and step > 0:
+        return handle_close(account, symbol, key)
+    elif signal == "force_close":
+        return handle_force_close(account, symbol, key)
+    else:
+        return jsonify({"status": f"Ignored: invalid order sequence ({signal})"}), 200
+
+def handle_buy(account, symbol, step, key):
     try:
-        ws = sheet.worksheet("Suivi en temps réel")
-        rows = ws.get_all_records()
-        now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        balance = api.query_private("Balance")
+        volume_to_use = float(balance["result"].get("ZUSD", 0.0)) * 0.3
+        if volume_to_use <= 5:
+            return jsonify({"status": "Not enough USD balance for buy"}), 200
 
-        # Rechercher la ligne à mettre à jour
-        for i, row in enumerate(rows):
-            if row["Compte"] == account and row["Crypto active"] == symbol:
-                ws.update(f"A{i+2}:H{i+2}", [[
-                    now, account, symbol, step,
-                    "Oui" if step == 0 else "Non",
-                    signal, txid, "Auto"
-                ]])
-                return
+        price_info = api.query_public("Ticker", {"pair": symbol.replace("/", "")})
+        price = float(list(price_info["result"].values())[0]["c"][0])
+        volume = round(volume_to_use / price, 8)
 
-        # Si aucune ligne trouvée, ajouter une nouvelle entrée
-        ws.append_row([
-            now, account, symbol, step,
-            "Oui" if step == 0 else "Non",
-            signal, txid, "Auto"
-        ])
+        response = api.query_private("AddOrder", {
+            "pair": symbol.replace("/", ""),
+            "type": "buy",
+            "ordertype": "market",
+            "volume": str(volume)
+        })
+        txid = response.get("result", {}).get("txid", ["?"])[0]
+        position_steps[key] = step
+        log_trade(account, symbol, f"buy{step}", volume, "buy", txid, price)
+        update_status(account, symbol, step, f"buy{step}", txid)
+        return jsonify({"status": f"buy{step} executed", "kraken_response": response}), 200
     except Exception as e:
-        print("Erreur update_status:", e)
+        return jsonify({"error": str(e), "status": f"buy{step} failed"}), 500
 
-# Journalisation d'un trade
-def log_trade(account, symbol, signal, volume, trade_type, txid="", price="?"):
+def handle_close(account, symbol, key):
     try:
-        ws = sheet.worksheet("Journal de trading")
-        now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        balance = api.query_private("Balance")
+        crypto_code = "X" + symbol.split("/")[0]
+        volume = balance["result"].get(crypto_code, "0")
+        if float(volume) == 0:
+            return jsonify({"status": "Nothing to sell", "volume": volume}), 200
 
-        ws.append_row([
-            now, account, symbol, signal,
-            volume, price, trade_type, "", txid
-        ])
+        response = api.query_private("AddOrder", {
+            "pair": symbol.replace("/", ""),
+            "type": "sell",
+            "ordertype": "market",
+            "volume": volume
+        })
+        txid = response.get("result", {}).get("txid", ["?"])[0]
+        log_trade(account, symbol, "close", volume, "sell", txid)
+        update_status(account, symbol, 0, "close", txid)
+        position_steps[key] = 0
+        return jsonify({"status": "Position closed", "kraken_response": response}), 200
     except Exception as e:
-        print("Erreur log_trade:", e)
+        return jsonify({"error": str(e), "status": "close failed"}), 500
+
+def handle_force_close(account, symbol, key):
+    try:
+        balance = api.query_private("Balance")
+        crypto_code = "X" + symbol.split("/")[0]
+        volume = balance["result"].get(crypto_code, "0")
+        if float(volume) == 0:
+            return jsonify({"status": "Nothing to force close"}), 200
+
+        response = api.query_private("AddOrder", {
+            "pair": symbol.replace("/", ""),
+            "type": "sell",
+            "ordertype": "market",
+            "volume": volume
+        })
+        txid = response.get("result", {}).get("txid", ["?"])[0]
+        log_trade(account, symbol, "force_close", volume, "sell", txid)
+        update_status(account, symbol, 0, "force_close", txid)
+        position_steps[key] = 0
+        return jsonify({"status": "Force close executed", "kraken_response": response}), 200
+    except Exception as e:
+        return jsonify({"error": str(e), "status": "force_close failed"}), 500
+
+if __name__ == "__main__":
+    app.run(host="0.0.0.0", port=5000)
