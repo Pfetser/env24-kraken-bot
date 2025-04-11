@@ -1,32 +1,57 @@
-//@version=5
-strategy("LENV24 B1", overlay=true, default_qty_type=strategy.percent_of_equity, default_qty_value=100, commission_type=strategy.commission.percent, commission_value=0.08)
+import gspread
+from google.oauth2.service_account import Credentials
+from datetime import datetime
+import os
 
-// === INPUTS ===
-ma_window = input.int(4, "MA Window", minval=1)
-buy1_offset = input.float(0.07, "Buy1 Envelope Offset (%)", step=0.01)
+# Configuration d'accès à l'API Google Sheets
+SCOPE = [
+    "https://www.googleapis.com/auth/spreadsheets",
+    "https://www.googleapis.com/auth/drive"
+]
 
-// === CALCULS ===
-ma = ta.sma(close, ma_window)
-buy1_line = ma * (1 - buy1_offset)
-close_line = ma
+# Utilise la variable d'environnement pour les credentials (JSON au format string)
+GOOGLE_CREDENTIALS_JSON = os.getenv("GOOGLE_CREDENTIALS_JSON")
+CREDS = Credentials.from_service_account_info(eval(GOOGLE_CREDENTIALS_JSON), scopes=SCOPE)
 
-// === ALERTES & ENTRÉES ===
-long_condition = ta.crossover(close, buy1_line)
-if long_condition
-    strategy.entry("Buy1", strategy.long)
+gs_client = gspread.authorize(CREDS)
+SPREADSHEET_ID = "1uyG-QNpWrb0FxV1r09Lc2L-3e1hzQ9eLM9ONQbcEg1Q"
+sheet = gs_client.open_by_key(SPREADSHEET_ID)
 
-// === SORTIE ===
-close_condition = ta.crossunder(close, close_line)
-if close_condition
-    strategy.close("Buy1")
+# Mise à jour de l'état en temps réel
+def update_status(account, symbol, step, signal, txid=""):
+    try:
+        ws = sheet.worksheet("Suivi en temps réel")
+        rows = ws.get_all_records()
+        now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
-// === VISUELS ===
-plot(ma, title="MA", color=color.orange, linewidth=2)
-plot(buy1_line, title="Buy1 Line", color=color.green, linewidth=1)
-plot(close_line, title="Close Line", color=color.red, linewidth=1)
+        # Rechercher la ligne à mettre à jour
+        for i, row in enumerate(rows):
+            if row["Compte"] == account and row["Crypto active"] == symbol:
+                ws.update(f"A{i+2}:H{i+2}", [[
+                    now, account, symbol, step,
+                    "Oui" if step == 0 else "Non",
+                    signal, txid, "Auto"
+                ]])
+                return
 
-plotshape(long_condition, title="Achat B1", location=location.belowbar, color=color.green, style=shape.triangleup, size=size.small)
-plotshape(close_condition, title="Vente", location=location.abovebar, color=color.red, style=shape.triangledown, size=size.small)
+        # Si aucune ligne trouvée, ajouter une nouvelle entrée
+        ws.append_row([
+            now, account, symbol, step,
+            "Oui" if step == 0 else "Non",
+            signal, txid, "Auto"
+        ])
+    except Exception as e:
+        print("Erreur update_status:", e)
 
-alertcondition(long_condition, title="Signal Buy1", message="{{ticker}} Buy1 Signal")
-alertcondition(close_condition, title="Signal Close", message="{{ticker}} Close Signal")
+# Journalisation d'un trade
+def log_trade(account, symbol, signal, volume, trade_type, txid="", price="?"):
+    try:
+        ws = sheet.worksheet("Journal de trading")
+        now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+        ws.append_row([
+            now, account, symbol, signal,
+            volume, price, trade_type, "", txid
+        ])
+    except Exception as e:
+        print("Erreur log_trade:", e)
