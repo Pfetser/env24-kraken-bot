@@ -1,10 +1,10 @@
-print("🚀 main.py bien déployé avec prepare_buy")
-
-from flask import Flask, request, jsonify
 import os
+from flask import Flask, request, jsonify
 import krakenex
 from dotenv import load_dotenv
 from google_sheets_logger import update_status, log_trade
+
+print("🚀 main.py bien déployé avec logique stricte ENV24")
 
 app = Flask(__name__)
 load_dotenv()
@@ -13,6 +13,7 @@ api = krakenex.API()
 api.key = os.getenv("KRAKEN_API_KEY")
 api.secret = os.getenv("KRAKEN_API_SECRET")
 
+# Suivi des positions par compte/crypto
 position_steps = {}
 
 @app.route("/", methods=["GET"])
@@ -30,14 +31,13 @@ def webhook():
     symbol = data.get("symbol")
     account = data.get("account")
 
+    print("🔔 Webhook reçu:", data)
+
     if strategy != "Env24":
         return jsonify({"status": "Ignored: Not Env24 strategy"}), 200
 
     key = f"{account}_{symbol}"
     step = position_steps.get(key, 0)
-
-    if signal == "prepare_buy":
-        return handle_prepare_buy(account)
 
     if signal == "buy1" and step == 0:
         return handle_buy(account, symbol, 1, key)
@@ -45,35 +45,17 @@ def webhook():
         return handle_buy(account, symbol, 2, key)
     elif signal == "buy3" and step == 2:
         return handle_buy(account, symbol, 3, key)
-    elif signal == "close" and step > 0:
+    elif signal == "close" and step >= 1:
         return handle_close(account, symbol, key)
     else:
+        print(f"🚫 Signal ignoré: {signal} reçu à l'étape {step}")
         return jsonify({"status": f"Ignored: invalid order sequence ({signal})"}), 200
-
-def handle_prepare_buy(account):
-    try:
-        balance = api.query_private("Balance")
-        staking_targets = ["ADA", "MINA", "TAO"]
-        for crypto in staking_targets:
-            staked_key = f"{crypto}.S"
-            if staked_key in balance["result"] and float(balance["result"][staked_key]) > 0:
-                volume = balance["result"][staked_key]
-                response = api.query_private("Stake/Unstake", {
-                    "asset": crypto,
-                    "amount": volume
-                })
-                txid = response.get("result", {}).get("txid", "?")
-                log_trade(account, f"{crypto}/USD", "prepare_unstake", volume, "unstake", txid)
-                update_status(account, f"{crypto}/USD", 0, "prepare_unstake", txid)
-                return jsonify({"status": f"Staking unstake requested for {crypto}", "txid": txid}), 200
-        return jsonify({"status": "No staked asset found to unstake"}), 200
-    except Exception as e:
-        return jsonify({"error": str(e), "status": "prepare_buy failed"}), 500
 
 def handle_buy(account, symbol, step, key):
     try:
         balance = api.query_private("Balance")
-        volume_to_use = float(balance["result"].get("ZUSD", 0.0)) * 0.3
+        usd_balance = float(balance["result"].get("ZUSD", 0.0))
+        volume_to_use = usd_balance * 0.3
         if volume_to_use <= 5:
             return jsonify({"status": "Not enough USD balance for buy"}), 200
 
@@ -117,13 +99,6 @@ def handle_close(account, symbol, key):
     except Exception as e:
         return jsonify({"error": str(e), "status": "close failed"}), 500
 
-@app.route("/debug/balance", methods=["GET"])
-def debug_balance():
-    try:
-        balance = api.query_private("Balance")
-        return jsonify(balance)
-    except Exception as e:
-        return jsonify({"error": str(e)})
-
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000)
+
